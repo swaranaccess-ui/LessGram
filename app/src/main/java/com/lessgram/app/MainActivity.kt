@@ -76,14 +76,16 @@ class MainActivity : ComponentActivity() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
+
             val channel = NotificationChannel(
                 "instagram",
                 "Instagram notifications",
                 NotificationManager.IMPORTANCE_DEFAULT
             )
 
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
+            getSystemService(
+                NotificationManager::class.java
+            ).createNotificationChannel(channel)
         }
     }
 }
@@ -175,7 +177,10 @@ private fun BlockedScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .padding(horizontal = 28.dp, vertical = 40.dp),
+            .padding(
+                horizontal = 28.dp,
+                vertical = 40.dp
+            ),
 
         horizontalAlignment = Alignment.CenterHorizontally,
 
@@ -228,7 +233,6 @@ private fun BlockedScreen(
 }
 
 private enum class WebMode {
-
     DM,
     SEARCH,
     PROFILE
@@ -275,57 +279,130 @@ private fun InstagramWeb(
                         WebSettings.getDefaultUserAgent(context)
                 }
 
-                CookieManager.getInstance().apply {
+                /*
+                 * Cookie configuration.
+                 *
+                 * IMPORTANT:
+                 * setAcceptThirdPartyCookies() requires
+                 * the actual WebView, not CookieManager.
+                 */
+                val cookieManager =
+                    CookieManager.getInstance()
 
-                    setAcceptCookie(true)
+                cookieManager.setAcceptCookie(true)
 
-                    setAcceptThirdPartyCookies(
-                        this@apply,
-                        true
-                    )
-                }
+                cookieManager.setAcceptThirdPartyCookies(
+                    this,
+                    true
+                )
 
-                webChromeClient = WebChromeClient()
+                webChromeClient =
+                    WebChromeClient()
 
-                webViewClient = object : WebViewClient() {
+                webViewClient =
+                    object : WebViewClient() {
 
-                    override fun shouldOverrideUrlLoading(
-                        view: WebView,
-                        request: WebResourceRequest
-                    ): Boolean {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView,
+                            request: WebResourceRequest
+                        ): Boolean {
 
-                        val url = request.url.toString()
+                            val url =
+                                request.url.toString()
 
-                        if (!url.startsWith(INSTAGRAM)) {
-                            return true
-                        }
-
-                        /*
-                         * Never allow the main Reels feed.
-                         */
-                        if (isReelsFeed(url)) {
-
-                            view.loadUrl(INSTAGRAM)
-
-                            return true
-                        }
-
-                        /*
-                         * Explore is blocked.
-                         */
-                        if (url.contains("/explore", true)) {
-
-                            if (mode != WebMode.SEARCH) {
-                                view.loadUrl(INSTAGRAM)
+                            /*
+                             * Keep Instagram pages
+                             * inside LessGram.
+                             */
+                            if (!url.startsWith(INSTAGRAM)) {
                                 return true
                             }
+
+                            /*
+                             * Block the Reels feed.
+                             */
+                            if (isReelsFeed(url)) {
+
+                                view.loadUrl(INSTAGRAM)
+
+                                return true
+                            }
+
+                            /*
+                             * Block Explore.
+                             */
+                            if (
+                                url.contains(
+                                    "/explore",
+                                    ignoreCase = true
+                                )
+                            ) {
+
+                                if (mode != WebMode.SEARCH) {
+
+                                    view.loadUrl(
+                                        INSTAGRAM
+                                    )
+
+                                    return true
+                                }
+                            }
+
+                            /*
+                             * Allow an individual Reel
+                             * received through DM.
+                             */
+                            if (mode == WebMode.DM) {
+
+                                if (isSingleReel(url)) {
+
+                                    injectSingleReelProtection(
+                                        view,
+                                        url
+                                    )
+
+                                    return false
+                                }
+                            }
+
+                            return false
                         }
 
-                        /*
-                         * When inside a DM, allow a SINGLE
-                         * shared Reel, but not the Reels feed.
-                         */
-                        if (mode == WebMode.DM) {
+                        override fun onPageFinished(
+                            view: WebView,
+                            url: String
+                        ) {
+
+                            super.onPageFinished(
+                                view,
+                                url
+                            )
+
+                            injectCommonCss(view)
+
+                            when (mode) {
+
+                                WebMode.DM -> {
+
+                                    injectDmProtection(
+                                        view
+                                    )
+                                }
+
+                                WebMode.SEARCH -> {
+
+                                    openInstagramSearch(
+                                        view
+                                    )
+                                }
+
+                                WebMode.PROFILE -> {
+
+                                    openInstagramProfile(
+                                        view
+                                    )
+                                }
+                            }
 
                             if (isSingleReel(url)) {
 
@@ -333,67 +410,9 @@ private fun InstagramWeb(
                                     view,
                                     url
                                 )
-
-                                return false
                             }
-                        }
-
-                        return false
-                    }
-
-                    override fun onPageFinished(
-                        view: WebView,
-                        url: String
-                    ) {
-
-                        super.onPageFinished(
-                            view,
-                            url
-                        )
-
-                        injectCommonCss(view)
-
-                        when (mode) {
-
-                            WebMode.DM -> {
-
-                                /*
-                                 * Keep DM clean and hide
-                                 * distracting navigation.
-                                 */
-                                injectDmProtection(view)
-                            }
-
-                            WebMode.SEARCH -> {
-
-                                /*
-                                 * Start from Instagram home,
-                                 * then activate Instagram's
-                                 * own search UI.
-                                 */
-                                openInstagramSearch(view)
-                            }
-
-                            WebMode.PROFILE -> {
-
-                                /*
-                                 * Start from Instagram home,
-                                 * then click the logged-in
-                                 * user's Profile button.
-                                 */
-                                openInstagramProfile(view)
-                            }
-                        }
-
-                        if (isSingleReel(url)) {
-
-                            injectSingleReelProtection(
-                                view,
-                                url
-                            )
                         }
                     }
-                }
 
                 loadUrl(initialUrl)
             }
@@ -402,25 +421,32 @@ private fun InstagramWeb(
         update = { view ->
 
             /*
-             * Reload only when switching to a new
-             * WebView destination.
+             * Reload the correct section when
+             * changing bottom tabs.
              */
             if (key > 0) {
 
                 when (mode) {
 
                     WebMode.DM -> {
+
                         view.loadUrl(
                             "https://www.instagram.com/direct/inbox/"
                         )
                     }
 
                     WebMode.SEARCH -> {
-                        view.loadUrl(INSTAGRAM)
+
+                        view.loadUrl(
+                            INSTAGRAM
+                        )
                     }
 
                     WebMode.PROFILE -> {
-                        view.loadUrl(INSTAGRAM)
+
+                        view.loadUrl(
+                            INSTAGRAM
+                        )
                     }
                 }
             }
@@ -428,20 +454,12 @@ private fun InstagramWeb(
     )
 }
 
-/*
- * Instagram Reels feed:
- *
- * /reels/
- *
- * A shared Reel:
- *
- * /reel/ABC123/
- */
 private fun isReelsFeed(
     url: String
 ): Boolean {
 
-    val lower = url.lowercase()
+    val lower =
+        url.lowercase()
 
     return lower.contains("/reels/") &&
             !lower.contains("/reel/")
@@ -455,12 +473,6 @@ private fun isSingleReel(
         .contains("/reel/")
 }
 
-/*
- * Open Instagram's own Search interface.
- *
- * We don't use /web/search/ because that route
- * is not reliable in the current Instagram web UI.
- */
 private fun openInstagramSearch(
     view: WebView
 ) {
@@ -475,36 +487,57 @@ private fun openInstagramSearch(
                         'a,button,[role="button"]'
                     );
 
-                for (var i = 0; i < elements.length; i++) {
+                for (
+                    var i = 0;
+                    i < elements.length;
+                    i++
+                ) {
 
-                    var el = elements[i];
+                    var el =
+                        elements[i];
 
                     var label =
                         (
-                            el.getAttribute('aria-label') ||
-                            el.getAttribute('title') ||
+                            el.getAttribute(
+                                'aria-label'
+                            ) ||
+                            el.getAttribute(
+                                'title'
+                            ) ||
                             el.innerText ||
                             ''
                         ).toLowerCase();
 
                     var href =
-                        el.getAttribute('href') || '';
+                        el.getAttribute(
+                            'href'
+                        ) || '';
 
                     if (
                         label === 'search' ||
-                        label.indexOf('search') !== -1 ||
-                        href.indexOf('/explore/search') !== -1
+                        label.indexOf(
+                            'search'
+                        ) !== -1 ||
+                        href.indexOf(
+                            '/explore/search'
+                        ) !== -1
                     ) {
 
                         try {
+
                             el.click();
+
                             return;
+
                         } catch(e) {}
                     }
                 }
             }
 
-            setTimeout(openSearch, 900);
+            setTimeout(
+                openSearch,
+                900
+            );
 
         })();
     """.trimIndent()
@@ -515,9 +548,6 @@ private fun openInstagramSearch(
     )
 }
 
-/*
- * Open the logged-in user's own Profile.
- */
 private fun openInstagramProfile(
     view: WebView
 ) {
@@ -532,31 +562,48 @@ private fun openInstagramProfile(
                         'a,button,[role="button"]'
                     );
 
-                for (var i = 0; i < elements.length; i++) {
+                for (
+                    var i = 0;
+                    i < elements.length;
+                    i++
+                ) {
 
-                    var el = elements[i];
+                    var el =
+                        elements[i];
 
                     var label =
                         (
-                            el.getAttribute('aria-label') ||
-                            el.getAttribute('title') ||
+                            el.getAttribute(
+                                'aria-label'
+                            ) ||
+                            el.getAttribute(
+                                'title'
+                            ) ||
                             ''
                         ).toLowerCase();
 
                     if (
                         label === 'profile' ||
-                        label.indexOf('profile') !== -1
+                        label.indexOf(
+                            'profile'
+                        ) !== -1
                     ) {
 
                         try {
+
                             el.click();
+
                             return;
+
                         } catch(e) {}
                     }
                 }
             }
 
-            setTimeout(openProfile, 900);
+            setTimeout(
+                openProfile,
+                900
+            );
 
         })();
     """.trimIndent()
@@ -574,7 +621,8 @@ private fun injectCommonCss(
     val javascript = """
         (function() {
 
-            var id = 'lessgram-common';
+            var id =
+                'lessgram-common';
 
             var old =
                 document.getElementById(id);
@@ -584,7 +632,9 @@ private fun injectCommonCss(
             }
 
             var style =
-                document.createElement('style');
+                document.createElement(
+                    'style'
+                );
 
             style.id = id;
 
@@ -592,27 +642,27 @@ private fun injectCommonCss(
 
                 html,
                 body {
-                    background: #000 !important;
+                    background:
+                        #000 !important;
                 }
 
-                /*
-                 * Hide Explore links.
-                 */
                 a[href*="/explore/"] {
-                    display: none !important;
+                    display:
+                        none !important;
                 }
 
-                /*
-                 * Hide Reels feed links.
-                 */
                 a[href*="/reels/"] {
-                    display: none !important;
+                    display:
+                        none !important;
                 }
 
             `;
 
             if (document.head) {
-                document.head.appendChild(style);
+
+                document.head.appendChild(
+                    style
+                );
             }
 
         })();
@@ -631,7 +681,8 @@ private fun injectDmProtection(
     val javascript = """
         (function() {
 
-            var id = 'lessgram-dm';
+            var id =
+                'lessgram-dm';
 
             var old =
                 document.getElementById(id);
@@ -641,24 +692,26 @@ private fun injectDmProtection(
             }
 
             var style =
-                document.createElement('style');
+                document.createElement(
+                    'style'
+                );
 
             style.id = id;
 
             style.innerHTML = `
 
-                /*
-                 * Hide Instagram's Reels entry
-                 * while using DM.
-                 */
                 a[href*="/reels/"] {
-                    display: none !important;
+                    display:
+                        none !important;
                 }
 
             `;
 
             if (document.head) {
-                document.head.appendChild(style);
+
+                document.head.appendChild(
+                    style
+                );
             }
 
         })();
@@ -670,18 +723,6 @@ private fun injectDmProtection(
     )
 }
 
-/*
- * This is the important fix for the
- * "I can swipe to another Reel" problem.
- *
- * Once a shared Reel is opened:
- *
- * - vertical swipes are blocked
- * - touch scrolling is blocked
- * - navigating to another Reel is blocked
- * - browser history changes to another Reel
- *   are immediately cancelled
- */
 private fun injectSingleReelProtection(
     view: WebView,
     originalUrl: String
@@ -689,25 +730,36 @@ private fun injectSingleReelProtection(
 
     val safeUrl =
         originalUrl
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
+            .replace(
+                "\\",
+                "\\\\"
+            )
+            .replace(
+                "'",
+                "\\'"
+            )
 
     val javascript = """
         (function() {
 
-            var originalReel = '$safeUrl';
+            var originalReel =
+                '$safeUrl';
 
             window.lessGramOriginalReel =
                 originalReel;
 
             /*
-             * Stop vertical swipe gestures.
+             * Prevent vertical swiping.
              */
-            if (!window.lessGramTouchInstalled) {
+            if (
+                !window.lessGramTouchInstalled
+            ) {
 
-                window.lessGramTouchInstalled = true;
+                window.lessGramTouchInstalled =
+                    true;
 
                 var startX = 0;
+
                 var startY = 0;
 
                 document.addEventListener(
@@ -720,10 +772,12 @@ private fun injectSingleReelProtection(
                         ) {
 
                             startX =
-                                e.touches[0].clientX;
+                                e.touches[0]
+                                    .clientX;
 
                             startY =
-                                e.touches[0].clientY;
+                                e.touches[0]
+                                    .clientY;
                         }
 
                     },
@@ -740,22 +794,22 @@ private fun injectSingleReelProtection(
                         ) {
 
                             var dx =
-                                e.touches[0].clientX -
+                                e.touches[0]
+                                    .clientX -
                                 startX;
 
                             var dy =
-                                e.touches[0].clientY -
+                                e.touches[0]
+                                    .clientY -
                                 startY;
 
-                            /*
-                             * Block vertical scrolling.
-                             */
                             if (
                                 Math.abs(dy) >
                                 Math.abs(dx)
                             ) {
 
                                 e.preventDefault();
+
                                 e.stopPropagation();
                             }
                         }
@@ -769,12 +823,15 @@ private fun injectSingleReelProtection(
             }
 
             /*
-             * Watch URL changes caused by
-             * Instagram's SPA navigation.
+             * Watch Instagram's SPA
+             * navigation.
              */
-            if (!window.lessGramHistoryInstalled) {
+            if (
+                !window.lessGramHistoryInstalled
+            ) {
 
-                window.lessGramHistoryInstalled = true;
+                window.lessGramHistoryInstalled =
+                    true;
 
                 var originalPush =
                     history.pushState;
@@ -816,7 +873,9 @@ private fun injectSingleReelProtection(
                     window.location.href;
 
                 if (
-                    current.indexOf('/reel/') !== -1 &&
+                    current.indexOf(
+                        '/reel/'
+                    ) !== -1 &&
                     current !== originalReel
                 ) {
 
@@ -832,11 +891,13 @@ private fun injectSingleReelProtection(
             }
 
             /*
-             * Check repeatedly because
-             * Instagram can change its URL
-             * without a normal page load.
+             * Instagram can change its
+             * URL without a full page load,
+             * so check periodically.
              */
-            if (!window.lessGramUrlWatcher) {
+            if (
+                !window.lessGramUrlWatcher
+            ) {
 
                 window.lessGramUrlWatcher =
                     setInterval(
@@ -861,48 +922,83 @@ private fun BottomBar(
 ) {
 
     NavigationBar(
-        modifier = Modifier.fillMaxWidth(),
-        containerColor = Color.Black,
-        contentColor = Color.White
+        modifier =
+            Modifier.fillMaxWidth(),
+
+        containerColor =
+            Color.Black,
+
+        contentColor =
+            Color.White
     ) {
 
         Nav(
-            icon = Icons.Outlined.Home,
-            label = "Home",
-            selected = selected == HOME
+            icon =
+                Icons.Outlined.Home,
+
+            label =
+                "Home",
+
+            selected =
+                selected == HOME
         ) {
+
             onSelect(HOME)
         }
 
         Nav(
-            icon = Icons.Outlined.PlayCircleOutline,
-            label = "Reels",
-            selected = selected == REELS
+            icon =
+                Icons.Outlined.PlayCircleOutline,
+
+            label =
+                "Reels",
+
+            selected =
+                selected == REELS
         ) {
+
             onSelect(REELS)
         }
 
         Nav(
-            icon = Icons.Outlined.MailOutline,
-            label = "DM",
-            selected = selected == DM
+            icon =
+                Icons.Outlined.MailOutline,
+
+            label =
+                "DM",
+
+            selected =
+                selected == DM
         ) {
+
             onSelect(DM)
         }
 
         Nav(
-            icon = Icons.Outlined.Search,
-            label = "Search",
-            selected = selected == SEARCH
+            icon =
+                Icons.Outlined.Search,
+
+            label =
+                "Search",
+
+            selected =
+                selected == SEARCH
         ) {
+
             onSelect(SEARCH)
         }
 
         Nav(
-            icon = Icons.Outlined.AccountCircle,
-            label = "Profile",
-            selected = selected == PROFILE
+            icon =
+                Icons.Outlined.AccountCircle,
+
+            label =
+                "Profile",
+
+            selected =
+                selected == PROFILE
         ) {
+
             onSelect(PROFILE)
         }
     }
@@ -910,22 +1006,32 @@ private fun BottomBar(
 
 @Composable
 private fun RowScope.Nav(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon:
+        androidx.compose.ui.graphics.vector.ImageVector,
+
     label: String,
+
     selected: Boolean,
+
     onClick: () -> Unit
 ) {
 
     NavigationBarItem(
 
-        selected = selected,
+        selected =
+            selected,
 
-        onClick = onClick,
+        onClick =
+            onClick,
 
         icon = {
+
             Icon(
-                imageVector = icon,
-                contentDescription = label
+                imageVector =
+                    icon,
+
+                contentDescription =
+                    label
             )
         },
 
